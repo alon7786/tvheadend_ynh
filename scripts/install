@@ -1,0 +1,92 @@
+#!/bin/bash
+
+#=================================================
+# MANAGE SCRIPT FAILURE
+#=================================================
+
+ynh_abort_if_errors
+
+#=================================================
+# RETRIEVE ARGUMENTS FROM THE MANIFEST
+#=================================================
+
+domain=$YNH_APP_ARG_DOMAIN
+path_url=$YNH_APP_ARG_PATH
+admin=tvheadend
+adminpass=$YNH_APP_ARG_PASSWORD
+user=$YNH_APP_ARG_USER
+
+#=================================================
+# CHECK IF THE APP CAN BE INSTALLED WITH THIS ARGS
+#=================================================
+
+# Normalize the url path syntax
+path_url=$(ynh_normalize_url_path $path_url)
+
+# Check web path availability
+ynh_webpath_available $domain $path_url
+# Register (book) web path
+ynh_webpath_register $app $domain $path_url
+
+#=================================================
+# STORE SETTINGS FROM MANIFEST
+#=================================================
+
+ynh_app_setting_set $app domain $domain
+ynh_app_setting_set $app path $path_url
+
+#=================================================
+# STANDARD MODIFICATIONS
+#=================================================
+# FIND AND OPEN PORTS
+#=================================================
+
+# Find a free port
+port=$(ynh_find_port 9981)
+# Open this port
+yunohost firewall allow TCP $port >/dev/null 2>&1
+ynh_app_setting_set $app port $port
+
+# Find a free port
+ctl_port=$(ynh_find_port 9982)
+# Open this port
+yunohost firewall allow TCP $ctl_port >/dev/null 2>&1
+ynh_app_setting_set $app ctl_port $ctl_port
+
+#=================================================
+# INSTALL TRANSMISSION
+#=================================================
+
+ynh_install_app_dependencies kodi-pvr-hts
+
+#=================================================
+# GENERIC FINALISATION
+#=================================================
+# ENABLE SERVICE IN ADMIN PANEL
+#=================================================
+
+sudo yunohost service add tvheadend --log "/var/log/syslog"
+
+# Add a "/" at the end of path_url for next commands
+# To avoid a double / in the nginx config file.
+[ "$path_url" = "/" ] || path_url=${path_url}/
+credential=$(echo -n "$admin:$adminpass" | base64)
+sed -i "s@ADMINNAME@$admin@g" ../conf/superuser
+sed -i "s@ADMINPASSWORD@$adminpass@g" ../conf/superuser
+sed -i "s@PATHTOCHANGE@$path@g" ../conf/nginx.conf
+sed -i "s@ADMINCREDENTIAL@$credential@g" ../conf/nginx.conf
+sudo cp ../conf/nginx.conf /etc/nginx/conf.d/$domain.d/tvheadend.conf
+sudo cp ../conf/superuser /home/hts/.hts/tvheadend/superuser
+
+# Remove acces to all users to remove tile
+sudo yunohost app removeaccess tvheadend
+sudo yunohost app addaccess tvheadend -u $user
+
+#=================================================
+# RELOAD NGINX
+#=================================================
+
+sudo service tvheadend restart
+sudo service nginx reload
+sudo yunohost app ssowatconf
+
